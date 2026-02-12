@@ -113,7 +113,7 @@ The resulting model is saved in `llama2/finetuned_models/{model_name_ft}-SafeDel
 
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python run_redline_recovery.py \
+CUDA_VISIBLE_DEVICES=0 python run_safedelta.py \
   --model_name_align 'ckpts/llama2-7b-chat-hf' \
   --model_name_ft 'finetuned_models/purebad100-7b-full' \
   --s 0.11 
