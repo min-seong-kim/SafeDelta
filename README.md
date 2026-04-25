@@ -36,7 +36,21 @@ This repository contains the official implementation of the Safe Delta algorithm
 
 
 ---
+1. Finetuning
+준비된 safety FT model로 수행
+python llama2/finetuning_gsm8k.py \
+    --model_name kmseong/llama2_7b-Safety-FT-lr3e-5 \
+    --output_folder gsm8k-llama2-7b-safeft \
+    --lr 3e-5 --epochs 3
 
+2. Then apply Safe Delta:
+Delta가 클수록 safety ↑, Utility ↓
+python llama2/run_safedelta.py \
+    --model_name_align kmseong/llama2_7b-chat-Safety-FT-lr5e-5 \
+    --model_name_ft finetuned_models/gsm8k-llama2-7b-chat-safeft \
+    --scale 0.1 \
+    --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
+    --upload_name kmseong/llama2-7b-chat-safedelta-scale0.1
 
 # 📖Introduction
 
@@ -68,6 +82,8 @@ conda activate safedelta
 pip install -r requirements.txt
 
 pip install flash-attn==2.7.2.post1 --no-build-isolation
+(안되면 이걸로 pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl)
+
 pip install vllm==0.7.3 # for fast evaluation
 ```
 

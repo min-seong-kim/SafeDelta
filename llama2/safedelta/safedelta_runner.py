@@ -275,6 +275,82 @@ def get_safe_data_systemprompt(nsamples, tokenizer, seq_len, template, seed=42):
     return trainloader
 
 
+def _is_instruct_model(model_name_or_path: str) -> bool:
+    ref = str(model_name_or_path).lower()
+    return any(tag in ref for tag in ("instruct", "chat"))
+
+
+def get_circuit_breakers_data(
+    nsamples: int,
+    tokenizer,
+    seq_len: int,
+    model_name_or_path: str = "",
+    data_path: str = "./safedelta/data/circuit_breakers_train.json",
+    seed: int = 42,
+) -> list:
+    """
+    Build Hessian calibration data from circuit_breakers_train.json.
+
+    Each entry has:
+        "prompt"       : the harmful user request
+        "llama3_output": the aligned model's safe refusal response
+
+    Supports two formatting modes (selected automatically):
+    - instruct / chat model  → tokenizer.apply_chat_template
+    - base model             → plain "[INST] … [/INST]" wrapping
+    """
+    with open(data_path, "r", encoding="utf-8") as f:
+        all_data = json.load(f)
+
+    random.seed(seed)
+    random.shuffle(all_data)
+    sampled = all_data[:nsamples]
+
+    use_chat_template = _is_instruct_model(model_name_or_path)
+    B_INST, E_INST = "[INST]", "[/INST]"
+
+    trainloader = []
+    for item in sampled:
+        prompt_text = item["prompt"]
+        response_text = item["llama3_output"]
+
+        if use_chat_template:
+            # ── instruct branch: use apply_chat_template ─────────────────
+            prompt_ids = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt_text}],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+            full_ids = tokenizer.apply_chat_template(
+                [
+                    {"role": "user", "content": prompt_text},
+                    {"role": "assistant", "content": response_text},
+                ],
+                tokenize=True,
+                add_generation_prompt=False,
+            )
+            prompt_len = len(prompt_ids)
+            full_ids = full_ids[:seq_len]
+            inp = torch.tensor(full_ids, dtype=torch.long).unsqueeze(0)
+        else:
+            # ── base model branch: [INST] … [/INST] wrapping ─────────────
+            prompt_str = B_INST + " " + prompt_text.strip() + " " + E_INST
+            enc_prompt = tokenizer(prompt_str, return_tensors="pt")
+            enc_response = tokenizer(response_text, return_tensors="pt")
+            inp = torch.cat(
+                (enc_prompt.input_ids, enc_response.input_ids[:, 1:]), dim=1
+            )
+            prompt_len = enc_prompt.input_ids.shape[1]
+
+        tar = inp.clone()
+        tar[:, :prompt_len] = -100
+        trainloader.append((inp, tar))
+
+    print(f"[circuit_breakers] Loaded {len(trainloader)} samples "
+          f"(mode: {'chat_template' if use_chat_template else 'INST_wrap'})")
+    return trainloader
+
+
 
 
 

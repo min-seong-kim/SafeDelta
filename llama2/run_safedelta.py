@@ -3,10 +3,15 @@
 # This code is adapted from https://github.com/IST-DASLab/sparsegpt
 # The current implementation follows an online processing approach for better code readability.
 
-CUDA_VISIBLE_DEVICES=0 python run_redline_recovery.py \
---model_name_align 'ckpts/llama2-7b-chat-hf' \
---model_name_ft 'finetuned_models/purebad100-7b-full' \
---s 0.11
+
+python llama2/run_safedelta.py \
+    --model_name_align kmseong/llama2_7b-chat-Safety-FT-lr5e-5 \
+    --model_name_ft finetuned_models/gsm8k-llama2-7b-chat-safeft \
+    --scale 0.5 \
+    --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
+    --upload_name kmseong/llama2-7b-chat-safedelta-scale0.5
+
+
 '''
 
 import os
@@ -42,7 +47,7 @@ from transformers import (
 transformers.set_seed(0)
 
 from transformers import LlamaConfig, LlamaTokenizer, LlamaForCausalLM, AutoTokenizer
-from safedelta.safedelta_runner import get_safe_data_systemprompt, find_layers, SafeDeltaRunner, get_safe_data
+from safedelta.safedelta_runner import get_safe_data_systemprompt, find_layers, SafeDeltaRunner, get_safe_data, get_circuit_breakers_data
 
 DEBUG = True
 
@@ -51,7 +56,14 @@ torch.backends.cudnn.allow_tf32 = False
 
 
 @torch.no_grad()
-def recovery_safety(model_name_align: str, model_name_ft: str, s: float, st_layer: int = 0, **kwargs):
+def recovery_safety(
+    model_name_align: str,
+    model_name_ft: str,
+    s: float,
+    st_layer: int = 0,
+    safe_data_path: str = None,
+    **kwargs,
+):
     ## load model
 
     align_model = LlamaForCausalLM.from_pretrained(
@@ -89,7 +101,11 @@ def recovery_safety(model_name_align: str, model_name_ft: str, s: float, st_laye
             }
         )
 
-    final_model = run_safedelta(align_model, ft_model, tokenizer, s, st_layer)
+    final_model = run_safedelta(
+        align_model, ft_model, tokenizer, s, st_layer,
+        safe_data_path=safe_data_path,
+        model_name_align=model_name_align,
+    )
 
     model_save_path = model_name_ft + f'-SafeDelta-s{s}'
 
@@ -100,9 +116,18 @@ def recovery_safety(model_name_align: str, model_name_ft: str, s: float, st_laye
 
     print('Save to', model_save_path)
 
+    upload_name = kwargs.pop('upload_name', None)
+    hf_token = kwargs.pop('hf_token', None)
+    if upload_name:
+        print(f'Uploading to HuggingFace Hub: {upload_name} ...')
+        final_model.push_to_hub(upload_name, token=hf_token)
+        tokenizer.push_to_hub(upload_name, token=hf_token)
+        print(f'Uploaded to https://huggingface.co/{upload_name}')
+
 
 @torch.no_grad()
-def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=128):
+def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=128,
+                  safe_data_path=None, model_name_align=''):
     use_cache = align_model.config.use_cache
     align_model.config.use_cache = False
 
@@ -118,7 +143,14 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
     #                                                 template=sys_prompt, seed=idx)
     #     dataloader.extend(cur_dataloader)
 
-    dataloader = get_safe_data(nsamples, tokenizer, seq_len)
+    if safe_data_path is not None:
+        dataloader = get_circuit_breakers_data(
+            nsamples, tokenizer, seq_len,
+            model_name_or_path=model_name_align,
+            data_path=safe_data_path,
+        )
+    else:
+        dataloader = get_safe_data(nsamples, tokenizer, seq_len)
 
     align_layers = align_model.model.layers
     ft_layers = ft_model.model.layers
@@ -129,6 +161,7 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
     # tars = []
     attention_mask = []
     position_ids = []
+    position_embeddings = []
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -137,8 +170,9 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
 
         def forward(self, inp, **kwargs):
             inps.append(inp)
-            attention_mask.append(kwargs["attention_mask"])
-            position_ids.append(kwargs["position_ids"])
+            attention_mask.append(kwargs.get("attention_mask"))
+            position_ids.append(kwargs.get("position_ids"))
+            position_embeddings.append(kwargs.get("position_embeddings"))
 
             raise ValueError
 
@@ -166,13 +200,11 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
     # current, transformers <= v4.46
 
     inps = [inp.squeeze(0).to(device) for inp in inps]
-    # inps_extra = [inp.squeeze(0).to(device) for inp in inps_extra]
-    # tars = [tar.squeeze(0).to(device) for tar in tars]
-    # tars_extra = [tar.squeeze(0).to(device) for tar in tars_extra]
-    # attention_mask = [am.to(device) for am in attention_mask]
-    # attention_mask_extra = [am.to(device) for am in attention_mask_extra]
-    position_ids = [pids.to(device) for pids in position_ids]
-    # position_ids_extra = [pids.to(device) for pids in position_ids_extra]
+    position_ids = [pids.to(device) if pids is not None else None for pids in position_ids]
+    position_embeddings = [
+        (pe[0].to(device), pe[1].to(device)) if pe is not None else None
+        for pe in position_embeddings
+    ]
 
     print('Start Online Safe Delta.')
 
@@ -197,10 +229,15 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
             handles.append(align_subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(nsamples):
-            outs[j] = align_layer(
-                inps[j].unsqueeze(0),
+            layer_kwargs = dict(
                 attention_mask=attention_mask[j],
                 position_ids=position_ids[j],
+            )
+            if position_embeddings[j] is not None:
+                layer_kwargs["position_embeddings"] = position_embeddings[j]
+            outs[j] = align_layer(
+                inps[j].unsqueeze(0),
+                **layer_kwargs,
             )[0].squeeze(0)
 
         for h in handles:
@@ -226,8 +263,11 @@ def main(model_name_align: str = 'ckpts/llama2-7b-chat-hf',
          model_name_ft: str = 'finetuned_models/purebad100-7b-full',
          scale: float = 0.1,
          st_layer: int = 0,
+         upload_name: str = None,
+         hf_token: str = None,
          **kwargs):
-    recovery_safety(model_name_align, model_name_ft, scale, st_layer, **kwargs)
+    recovery_safety(model_name_align, model_name_ft, scale, st_layer,
+                    upload_name=upload_name, hf_token=hf_token, **kwargs)
 
 
 if __name__ == "__main__":
