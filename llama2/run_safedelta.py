@@ -5,11 +5,11 @@
 
 
 python llama2/run_safedelta.py \
-    --model_name_align kmseong/llama2_7b-chat-Safety-FT-lr5e-5 \
-    --model_name_ft finetuned_models/gsm8k-llama2-7b-chat-safeft \
-    --scale 0.5 \
+    --model_name_align kmseong/llama3_2_3b-instruct-SSFT-lr5e-5 \
+    --model_name_ft kmseong/llama3_2_3b_instruct_MATH_SSFT_lr3e-5 \
+    --scale 3 \
     --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama2-7b-chat-safedelta-scale0.5
+    --upload_name kmseong/llama3_2_3b-instruct-math-safedelta-scale3
 
 
 '''
@@ -65,8 +65,9 @@ def recovery_safety(
     **kwargs,
 ):
     ## load model
+    from transformers import AutoModelForCausalLM
 
-    align_model = LlamaForCausalLM.from_pretrained(
+    align_model = AutoModelForCausalLM.from_pretrained(
         model_name_align,
         return_dict=True,
         device_map="cuda",
@@ -74,32 +75,22 @@ def recovery_safety(
         torch_dtype="auto",
     )
 
-    ft_model = LlamaForCausalLM.from_pretrained(
+    ft_model = AutoModelForCausalLM.from_pretrained(
         model_name_ft,
         return_dict=True,
-        # load_in_8bit=False,
         device_map="cuda",
         low_cpu_mem_usage=True,
         torch_dtype="auto",
     )
 
-    # Load the tokenizer and add special tokens
-    if 'llama3' in model_name_ft:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name_align
-        )
-        if not tokenizer.pad_token_id:
+    # Load the tokenizer — use AutoTokenizer for all variants (llama2/3/3.2)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_align)
+    if tokenizer.pad_token_id is None:
+        # LLaMA-2 style: add a dedicated pad token
+        if 'llama-2' in model_name_align.lower() or 'llama2' in model_name_align.lower():
+            tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        else:
             tokenizer.pad_token_id = tokenizer.eos_token_id
-    else:
-        if 'llama2' not in model_name_ft:
-            warnings.warn("Warning: Current implementation only supports LLaMA-2.", UserWarning)
-
-        tokenizer = LlamaTokenizer.from_pretrained(model_name_align)
-        tokenizer.add_special_tokens(
-            {
-                "pad_token": "<PAD>",
-            }
-        )
 
     final_model = run_safedelta(
         align_model, ft_model, tokenizer, s, st_layer,
@@ -184,7 +175,9 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
         except ValueError:
             pass
 
-    align_layers[0] = align_layers[0].module
+    if isinstance(align_layers[st_layer_idx], Catcher):
+        align_layers[st_layer_idx] = align_layers[st_layer_idx].module
+    
     torch.cuda.empty_cache()
 
     # outs = torch.zeros_like(inps)
