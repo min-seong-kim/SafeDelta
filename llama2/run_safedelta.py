@@ -9,7 +9,23 @@ python llama2/run_safedelta.py \
     --model_name_ft kmseong/llama2_7b-chat_gsm8k_full_ft_lr5e-5 \
     --scale 0.1 \
     --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama2-7b-chat-gsm8k-safedelta-scale0.1
+    --upload_name kmseong/llama2-7b-chat-gsm8k-safedelta-scale0.1_revised
+
+
+python llama2/run_safedelta.py \
+    --model_name_align kmseong/llama3_2_3b-instruct-SSFT-lr5e-5 \
+    --model_name_ft kmseong/llama3_2_3b-instruct-gsm8k_ssft_lr5e-5 \
+    --scale 0.1 \
+    --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
+    --upload_name kmseong/llama3_2_3b-instruct-gsm8k-safedelta-scale0.1_revised
+
+
+python llama2/run_safedelta.py \
+    --model_name_align wvnvwn/llama-2-13b-chat-hf-SSFT-lr5e-5 \
+    --model_name_ft kmseong/llama3_2_3b-instruct-gsm8k_ssft_lr5e-5 \
+    --scale 0.1 \
+    --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
+    --upload_name kmseong/llama3_2_3b-instruct-gsm8k-safedelta-scale0.1_revised    
 
 
 '''
@@ -94,6 +110,8 @@ def recovery_safety(
 
     final_model = run_safedelta(
         align_model, ft_model, tokenizer, s, st_layer,
+        nsamples=kwargs.pop('nsamples', 512),
+        seq_len=kwargs.pop('seq_len', 512),
         safe_data_path=safe_data_path,
         model_name_align=model_name_align,
     )
@@ -117,14 +135,10 @@ def recovery_safety(
 
 
 @torch.no_grad()
-def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=128,
+def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=512, seq_len=512,
                   safe_data_path=None, model_name_align=''):
     use_cache = align_model.config.use_cache
     align_model.config.use_cache = False
-
-    # batch_size = 1
-    seq_len = 512
-    # nsamples = 128
 
     # dataloader = []
 
@@ -207,9 +221,10 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=12
         align_subset = find_layers(align_layer)
         ft_subset = find_layers(ft_layer)
 
+        ref_hidden_size = align_model.config.hidden_size
         gpts = {}
         for name in align_subset:
-            gpts[name] = SafeDeltaRunner(align_subset[name], ft_subset[name])
+            gpts[name] = SafeDeltaRunner(align_subset[name], ft_subset[name], ref_hidden_size=ref_hidden_size)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -256,10 +271,13 @@ def main(model_name_align: str = 'ckpts/llama2-7b-chat-hf',
          model_name_ft: str = 'finetuned_models/purebad100-7b-full',
          scale: float = 0.1,
          st_layer: int = 0,
+         nsamples: int = 512,
+         seq_len: int = 512,
          upload_name: str = None,
          hf_token: str = None,
          **kwargs):
     recovery_safety(model_name_align, model_name_ft, scale, st_layer,
+                    nsamples=nsamples, seq_len=seq_len,
                     upload_name=upload_name, hf_token=hf_token, **kwargs)
 
 

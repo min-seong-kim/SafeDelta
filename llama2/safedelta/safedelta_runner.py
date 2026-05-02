@@ -40,9 +40,10 @@ def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=''):
 class SafeDeltaRunner:
     # adapted from https://github.com/IST-DASLab/sparsegpt
 
-    def __init__(self, align_layer, sft_layer):
+    def __init__(self, align_layer, sft_layer, ref_hidden_size=4096):
         self.align_layer = align_layer
         self.sft_layer = sft_layer
+        self.ref_hidden_size = ref_hidden_size
         self.dev = self.align_layer.weight.device
         W = align_layer.weight.data.clone()
         if isinstance(self.align_layer, nn.Conv2d):
@@ -68,7 +69,7 @@ class SafeDeltaRunner:
         self.H += inp.matmul(inp.t())
 
     def adjust_delta(
-        self, s, blocksize=1024, percdamp=.01
+        self, s, blocksize=2048, percdamp=.01
     ):
         W = self.align_layer.weight.data.clone()
         W_sft = self.sft_layer.weight.data.clone()
@@ -102,8 +103,8 @@ class SafeDeltaRunner:
         H = torch.linalg.cholesky(H, upper=True)
         Hinv = H
 
-        scale = self.rows / 4096
-        s = s / 2 # 2 = 4096 / blocksize=2048
+        scale = self.rows / self.ref_hidden_size
+        s = s * blocksize / self.columns  # normalize per-block
 
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
