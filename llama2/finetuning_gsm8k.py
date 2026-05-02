@@ -18,10 +18,10 @@ python llama2/finetuning_gsm8k.py \
 Then apply Safe Delta:
 python llama2/run_safedelta.py \
     --model_name_align kmseong/llama2_7b-chat-Safety-FT-lr5e-5 \
-    --model_name_ft kmseong/llama2_7b_chat-SSFT-MEDQA-FT-lr3e-5 \
+    --model_name_ft kmseong/llama2_7b-chat_gsm8k_full_ft_lr5e-5 \
     --scale 0.1 \
     --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama2-7b-chat-medqa-safedelta-scale0.1
+    --upload_name kmseong/llama2-7b-chat-gsm8k-safedelta-scale0.1
 """
 
 import argparse
