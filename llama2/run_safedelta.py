@@ -6,26 +6,20 @@
 
 python llama2/run_safedelta.py \
     --model_name_align kmseong/llama2_7b-chat-Safety-FT-lr5e-5 \
-    --model_name_ft kmseong/llama2_7b-chat_gsm8k_full_ft_lr5e-5 \
+    --model_name_ft kmseong/llama2_7b_chat-MBPP-FT-lr5e-5 \
     --scale 0.1 \
     --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama2-7b-chat-gsm8k-safedelta-scale0.1_revised
+    --upload_name kmseong/llama2-7b-chat-lr5e-5-safedelta-scale0.1
 
 
 python llama2/run_safedelta.py \
     --model_name_align kmseong/llama3_2_3b-instruct-SSFT-lr5e-5 \
-    --model_name_ft kmseong/llama3_2_3b-instruct-gsm8k_ssft_lr5e-5 \
+    --model_name_ft kmseong/llama3_2_3b_instruct_MATH_lr5e-5 \
     --scale 0.1 \
     --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama3_2_3b-instruct-gsm8k-safedelta-scale0.1_revised
+    --upload_name kmseong/llama3_2_3b-instruct-MATH-safedelta-scale0.1
 
 
-python llama2/run_safedelta.py \
-    --model_name_align wvnvwn/llama-2-13b-chat-hf-SSFT-lr5e-5 \
-    --model_name_ft kmseong/llama3_2_3b-instruct-gsm8k_ssft_lr5e-5 \
-    --scale 0.1 \
-    --safe_data_path ./llama2/safedelta/data/circuit_breakers_train.json \
-    --upload_name kmseong/llama3_2_3b-instruct-gsm8k-safedelta-scale0.1_revised    
 
 
 '''
@@ -60,7 +54,9 @@ from transformers import (
     default_data_collator,
 )
 
-transformers.set_seed(0)
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
+transformers.set_seed(42)
 
 from transformers import LlamaConfig, LlamaTokenizer, LlamaForCausalLM, AutoTokenizer
 from safedelta.safedelta_runner import get_safe_data_systemprompt, find_layers, SafeDeltaRunner, get_safe_data, get_circuit_breakers_data

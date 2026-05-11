@@ -103,8 +103,14 @@ class SafeDeltaRunner:
         H = torch.linalg.cholesky(H, upper=True)
         Hinv = H
 
+
+
+
         scale = self.rows / self.ref_hidden_size
         s = s * blocksize / self.columns  # normalize per-block
+
+
+
 
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
@@ -164,6 +170,21 @@ class SafeDeltaRunner:
             # Losses += torch.sum(Losses1, 1) / 2
 
             W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
+
+            # ── diagnostic: fraction of weights replaced by W_sft ────────────
+            total_params = self.rows * self.columns
+            # recompute full mask across all blocks for reporting
+            W_orig = self.align_layer.weight.data.clone().float()
+            if isinstance(self.align_layer, nn.Conv2d):
+                W_orig = W_orig.flatten(1)
+            if isinstance(self.align_layer, transformers.Conv1D):
+                W_orig = W_orig.t()
+            changed = (W.reshape(self.rows, self.columns) != W_orig.reshape(self.rows, self.columns)).float()
+            frac = changed.mean().item()
+            print(f"  [SafeDelta] {self.rows}×{self.columns}  "
+                f"s_eff={s:.5f}  scale={scale:.4f}  "
+                f"modified={frac*100:.2f}%  ({int(frac*total_params)}/{total_params} params)")
+
 
 
         torch.cuda.synchronize()

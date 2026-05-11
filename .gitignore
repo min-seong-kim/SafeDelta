@@ -3,6 +3,7 @@
 tmp.out
 tmp.slurm
 
+./cache/*
 
 llama2/ckpts
 !llama2/ckpts/.dummy
