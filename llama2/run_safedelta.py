@@ -42,6 +42,14 @@ import torch
 import torch.nn as nn
 import transformers
 from tqdm import tqdm
+
+# cuDNN SDPA 백엔드 비활성화 (Qwen2.5-32B + 특정 cuDNN 조합에서
+# "No valid execution plans built" 에러 회피). flash/mem-efficient/math
+# 커널은 그대로 사용되므로 정확도/속도 영향은 거의 없음.
+try:
+    torch.backends.cuda.enable_cudnn_sdp(False)
+except Exception:
+    pass
 import json
 import fire
 
@@ -54,7 +62,7 @@ from transformers import (
     default_data_collator,
 )
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 transformers.set_seed(42)
 
@@ -168,6 +176,18 @@ def run_safedelta(align_model, ft_model, tokenizer, s, st_layer_idx, nsamples=51
         def __init__(self, module):
             super().__init__()
             self.module = module
+            # 최신 transformers의 Qwen2 forward는 호출 직전에
+            # decoder_layer.attention_type 등 레이어 속성을 읽으므로
+            # 래핑된 원본 레이어의 속성을 그대로 노출해줘야 함.
+            self.attention_type = getattr(module, "attention_type", "full_attention")
+
+        def __getattr__(self, name):
+            # nn.Module의 정상 조회(파라미터/버퍼/_modules 등)가 먼저 시도되고,
+            # 실패한 속성만 원본 module으로 위임한다.
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                return getattr(self.module, name)
 
         def forward(self, inp, **kwargs):
             inps.append(inp)
